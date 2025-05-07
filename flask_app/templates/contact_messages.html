@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row">
+        <div class="col-12">
+            <div class="card border-0 shadow-lg rounded-4 overflow-hidden">
+                <div class="card-header py-4 text-center"
+                    style="background: linear-gradient(135deg, #5f9ea0 0%, #4682b4 100%);">
+                    <h2 class="text-white mb-0"><i class="bi bi-envelope-paper me-2"></i> Contact Messages</h2>
+                </div>
+
+                <div class="card-body p-4">
+                    {% with messages = get_flashed_messages() %}
+                    {% if messages %}
+                    {% for message in messages %}
+                    <div class="alert alert-info alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                    {% endfor %}
+                    {% endif %}
+                    {% endwith %}
+
+                    {% if messages %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Message</th>
+                                    <th>Date</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for message in messages %}
+                                <tr class="{% if not message.is_read %}table-warning{% endif %}">
+                                    <td>{{ message.name }}</td>
+                                    <td>{{ message.email }}</td>
+                                    <td>{{ message.message[:100] }}{% if message.message|length > 100 %}...{% endif %}
+                                    </td>
+                                    <td>{{ message.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                    <td>
+                                        {% if message.is_read %}
+                                        <span class="badge bg-success">Read</span>
+                                        {% else %}
+                                        <span class="badge bg-warning">Unread</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if not message.is_read %}
+                                        <a href="{{ url_for('mark_message_read', message_id=message.id) }}"
+                                            class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-check-circle"></i> Mark as Read
+                                        </a>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-envelope-x display-1 text-muted mb-3"></i>
+                        <h4 class="text-muted">No messages yet</h4>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

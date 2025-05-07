@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-lg rounded-4 overflow-hidden">
+                <div class="card-header py-4 text-center" style="background: linear-gradient(135deg, #5f9ea0 0%, #4682b4 100%);">
+                    <h2 class="text-white mb-0"><i class="bi bi-pencil-square me-2"></i> Edit Recipe</h2>
+                </div>
+
+                <div class="card-body p-5 bg-white">
+                    <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+                        {{ form.hidden_tag() }}
+                        
+                        <!-- Title -->
+                        <div class="mb-4">
+                            {{ form.title.label(class="form-label") }}
+                            {{ form.title(class="form-control form-control-lg") }}
+                            {% if form.title.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.title.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Description -->
+                        <div class="mb-4">
+                            {{ form.description.label(class="form-label") }}
+                            {{ form.description(class="form-control", rows="4") }}
+                            {% if form.description.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.description.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Ingredients -->
+                        <div class="mb-4">
+                            {{ form.ingredients.label(class="form-label") }}
+                            {{ form.ingredients(class="form-control", rows="4") }}
+                            {% if form.ingredients.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.ingredients.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Cooking Method -->
+                        <div class="mb-4">
+                            {{ form.cooking_method.label(class="form-label") }}
+                            {{ form.cooking_method(class="form-control", rows="4") }}
+                            {% if form.cooking_method.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.cooking_method.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Image -->
+                        <div class="mb-4">
+                            {{ form.image.label(class="form-label") }}
+                            {{ form.image(class="form-control") }}
+                            {% if form.image.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.image.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            {% if recipe.image %}
+                            <div class="mt-2">
+                                <img src="{{ url_for('static', filename='uploads/' + recipe.image) }}" class="img-thumbnail" style="max-height: 200px;">
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Calorie Count -->
+                        <div class="mb-4">
+                            {{ form.calorie_count.label(class="form-label") }}
+                            {{ form.calorie_count(class="form-control") }}
+                            {% if form.calorie_count.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.calorie_count.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Cooking Time -->
+                        <div class="mb-4">
+                            {{ form.cooking_time.label(class="form-label") }}
+                            {{ form.cooking_time(class="form-control") }}
+                            {% if form.cooking_time.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.cooking_time.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Allergic Content -->
+                        <div class="mb-4">
+                            {{ form.allergic_content.label(class="form-label") }}
+                            {{ form.allergic_content(class="form-control") }}
+                            {% if form.allergic_content.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.allergic_content.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Category -->
+                        <div class="mb-4">
+                            {{ form.category.label(class="form-label") }}
+                            {{ form.category(class="form-select") }}
+                            {% if form.category.errors %}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.category.errors %}
+                                {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-check-circle me-2"></i>Update Recipe
+                            </button>
+                            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left me-2"></i>Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

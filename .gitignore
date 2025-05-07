@@ -1,0 +1,6 @@
+env/
+RecipeProject/media/
+flask_app/static/media/
+__pycache__/
+*.pyc
+.vscode/

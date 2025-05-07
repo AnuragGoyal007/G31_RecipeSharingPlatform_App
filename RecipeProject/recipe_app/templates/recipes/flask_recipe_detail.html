@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>{{ recipe.title }}</h2>
+<div class="card">
+    {% if recipe.image %}
+    <img src="{{ recipe.image }}" class="card-img-top" alt="{{ recipe.title }}">
+    {% endif %}
+    <div class="card-body">
+        <p class="card-text">{{ recipe.description }}</p>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <span class="badge bg-{% if recipe.category == 'veg' %}success{% else %}danger{% endif %} rounded-pill px-3 py-2 me-2">
+                    {{ recipe.get_category_display }}
+                </span>
+                <span class="text-muted"><i class="bi bi-clock"></i> {{ recipe.cooking_time }} min</span>
+            </div>
+
+            <div class="row mb-4">
+                
+                    <div class="p-3 bg-light rounded">
+                        <h5 class="text-center">Calories</h5>
+                        <p class="text-center mb-0">{{ recipe.calorie_count }} kcal</p>
+                    </div>
+                    <div class="p-3 bg-light rounded">
+                        <h5 class="text-center">Allergens</h5>
+                        <p class="text-center mb-0">{{ recipe.allergic_content|default:"None" }}</p>
+                    </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
