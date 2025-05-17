@@ -177,9 +177,10 @@ def get_recipes(category=None):
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 👥 Authors
+## 👥 Team Members
 
-- Your Name - Initial work
+- <span style="font-weight: bold;">ANURAG GOYAL</span>
+- <span style="font-weight: bold;">BHARGAV SHARMA</span>
 
 ## 🙏 Acknowledgments
 
