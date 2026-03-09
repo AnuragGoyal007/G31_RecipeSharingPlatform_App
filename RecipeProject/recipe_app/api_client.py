@@ -115,11 +115,10 @@ class FlaskAPIClient:
     
         try:
             response = self._make_request('POST', '/api/recipes', data=recipe_data, requires_auth=True)
-            print("API Response:", response)  # Debug print
             return response
         except Exception as e:
-            print("API Request Failed:", str(e))  # Debug print
-        raise
+            logger.error(f"API Request Failed: {str(e)}")
+            raise
     
     def update_recipe(self, recipe_id, recipe_data):
         """Update an existing recipe"""

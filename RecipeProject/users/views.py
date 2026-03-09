@@ -1,62 +1,105 @@
 from django.shortcuts import render, redirect
-from django.contrib.auth import login, logout, authenticate, update_session_auth_hash
+from django.contrib.auth import login, logout, authenticate, update_session_auth_hash, get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import PasswordChangeForm
 from django.contrib import messages
 from django.views.decorators.csrf import ensure_csrf_cookie, csrf_protect
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
+import logging
+
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from recipe_app.models import Recipe
+from recipe_app.api_client import FlaskAPIClient
 
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+@never_cache
 def register(request):
+    """Register via Flask API and sync with Django session"""
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+
     if request.method == 'POST':
         form = CustomUserCreationForm(request.POST, request.FILES)
         if form.is_valid():
-            user = form.save()  # Form handles user_type automatically
-            login(request, user)
-            messages.success(request, "Registration successful!")
-            return redirect('dashboard')
+            # Data for Flask API
+            user_data = {
+                'username': form.cleaned_data['username'],
+                'email': form.cleaned_data['email'],
+                'password': form.cleaned_data['password1'], # Standard Django field name in UserCreationForm
+                'first_name': form.cleaned_data.get('first_name', ''),
+                'last_name': form.cleaned_data.get('last_name', ''),
+                'user_type': 'user'
+            }
+            
+            client = FlaskAPIClient()
+            try:
+                # Create user in Flask API
+                api_user = client.create_user(user_data)
+                
+                # If API success, sync with Django and log in
+                user = form.save() # Saves to local DB as well
+                
+                # Perform login to get token
+                auth_result = client.login(user_data['username'], user_data['password'])
+                if auth_result and auth_result.get('access_token'):
+                    request.session['flask_token'] = auth_result['access_token']
+                    
+                login(request, user)
+                messages.success(request, "Registration successful!")
+                return redirect('dashboard')
+            except Exception as e:
+                logger.error(f"Registration failed in API: {str(e)}")
+                messages.error(request, f"Registration failed: {str(e)}")
         else:
             messages.error(request, "Please correct the errors below.")
     else:
         form = CustomUserCreationForm()
     return render(request, 'users/register.html', {'form': form})
 
-
-
-
-
-
-
 @never_cache
 def user_login(request):
-    # If user is already authenticated, redirect to dashboard
+    """Login via Flask API and sync with Django session"""
     if request.user.is_authenticated:
         return redirect('dashboard')
 
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
-        user_type = request.POST.get('user_type', 'user')  # Default to 'user'
         
-        user = authenticate(request, username=username, password=password)
+        if not username or not password:
+            messages.error(request, 'Both username and password are required')
+            return render(request, 'users/login.html')
         
-        if user is not None:
-            login(request, user)
+        client = FlaskAPIClient()
+        try:
+            auth_result = client.login(username, password)
             
-            # Successful login - always redirect
-            if user_type == 'admin' and user.is_superuser:
-                return redirect('/admin/')
-            else:
-                messages.warning(request, "You aren't an admin. Hence, you can't access admin panel properties")
-            return redirect('dashboard')
-        
-        # Failed authentication
-        messages.error(request, "Invalid username or password")
-        return render(request, 'users/login.html')  # Show form with errors
+            if auth_result and auth_result.get('access_token'):
+                # Sync user with Django
+                user, created = User.objects.get_or_create(
+                    username=username,
+                    defaults={
+                        'email': auth_result.get('user', {}).get('email', ''),
+                        'is_active': True
+                    }
+                )
+                
+                # Store Flask token in session
+                request.session['flask_token'] = auth_result['access_token']
+                
+                # Login in Django context
+                login(request, user)
+                messages.success(request, 'Logged in successfully!')
+                return redirect('dashboard')
+            
+            messages.error(request, 'Invalid username or password')
+        except Exception as e:
+            logger.error(f"Login failed: {str(e)}")
+            messages.error(request, 'Authentication service is currently unavailable')
     
-    # GET request - show fresh login form
     return render(request, 'users/login.html')
 
 @never_cache

@@ -1,49 +1,49 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from .models import Recipe, Comment, ContactMessage
-from .forms import RecipeForm, CommentForm
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseForbidden
-from .forms import RecipeForm, CommentForm, ContactForm
 from django.contrib import messages
-from django.contrib.auth.models import User
-from django.contrib.auth.forms import AuthenticationForm
-from django.contrib.auth import login as django_login, authenticate
-from django.contrib.auth.models import User
-from django.contrib.auth.forms import AuthenticationForm
-from django.contrib.auth import logout as django_logout
+from django.contrib.auth import login as django_login, logout as django_logout, authenticate, get_user_model
+import logging
 
-#--------------------------------------------------------------------------------------------------------------
-
+from .models import Recipe, Comment, ContactMessage
+from .forms import RecipeForm, CommentForm, ContactForm
 from .api_client import FlaskAPIClient, FlaskAPIError
 
+logger = logging.getLogger(__name__)
+User = get_user_model()
+
+# --- Flask API Backend Views ---
 
 def recipe_list(request):
+    """List all recipes from Flask API"""
     client = FlaskAPIClient()
+    category = request.GET.get('category')
     
     try:
-        recipes = client.get_recipes()
-        if not recipes:  # Handle empty response
+        recipes = client.get_recipes(category=category)
+        if not recipes:
             messages.warning(request, 'No recipes found')
             recipes = []
-        return render(request, 'recipes/list.html', {'recipes': recipes})
+        return render(request, 'recipes/list.html', {'recipes': recipes, 'category': category})
     except FlaskAPIError as e:
         messages.error(request, f'API Error: {str(e)}')
         return render(request, 'recipes/list.html', {'recipes': []})
-    except Exception as e:
-        messages.error(request, f'Unexpected error: {str(e)}')
-        return render(request, 'recipes/list.html', {'recipes': []})
-    
 
-def flask_recipe_detail(request, pk):
+def recipe_detail(request, pk):
+    """View details of a recipe from Flask API"""
     client = FlaskAPIClient()
     try:
         recipe = client.get_recipe(pk)  
         return render(request, 'recipes/flask_recipe_detail.html', {'recipe': recipe})
     except Exception as e:
-        return render(request, 'error.html', {'message': str(e)})
-    
-    
+        logger.error(f"Error fetching recipe {pk}: {str(e)}")
+        return render(request, 'error.html', {'message': "Recipe not found or API error"})
+
 def user_login(request):
+    """Login via Flask API and sync with Django session"""
+    if request.user.is_authenticated:
+        return redirect('home')
+
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
@@ -52,13 +52,12 @@ def user_login(request):
             messages.error(request, 'Both username and password are required')
             return render(request, 'users/login.html')
         
-        # Authenticate via Flask API
         client = FlaskAPIClient()
         try:
             auth_result = client.login(username, password)
             
             if auth_result and auth_result.get('access_token'):
-                # Get or create Django user
+                # Sync user with Django - Password is not stored in Django for security (unusable)
                 user, created = User.objects.get_or_create(
                     username=username,
                     defaults={
@@ -67,46 +66,36 @@ def user_login(request):
                     }
                 )
                 
-                if created:
-                    user.set_unusable_password()
-                    user.save()
-                
-                # Store Flask token in session
                 request.session['flask_token'] = auth_result['access_token']
-                
-                # Login user in Django
                 django_login(request, user)
                 messages.success(request, 'Logged in successfully!')
                 return redirect('home')
             
             messages.error(request, 'Invalid credentials')
         except Exception as e:
-            messages.error(request, f'Login failed: {str(e)}')
+            logger.error(f"Login failed: {str(e)}")
+            messages.error(request, 'Connection to authentication service failed')
     
     return render(request, 'users/login.html')
 
 @login_required
 def user_logout(request):
-    # Clear the Flask API token from session
+    """Logout and clear Flask token"""
     if 'flask_token' in request.session:
         del request.session['flask_token']
-    
-    # Perform Django logout
     django_logout(request)
-    
-    # Add success message and redirect
     messages.success(request, 'You have been successfully logged out.')
-    return redirect('home')  # or your preferred redirect target
+    return redirect('home')
 
 @login_required
-def flask_recipe_create(request):
+def recipe_create(request):
+    """Create a recipe via Flask API"""
     if not request.session.get('flask_token'):
         messages.error(request, "Please login to create recipes")
         return redirect('user_login')
 
     if request.method == 'POST':
         try:
-            # Convert empty strings to None for optional fields
             form_data = {
                 'title': request.POST.get('title', '').strip(),
                 'description': request.POST.get('description', '').strip(),
@@ -115,177 +104,151 @@ def flask_recipe_create(request):
                 'calorie_count': int(request.POST.get('calorie_count', 0)),
                 'cooking_time': int(request.POST.get('cooking_time', 0)),
                 'category': request.POST.get('category', 'veg'),
-                'user_id': request.user.id
+                'allergic_content': request.POST.get('allergic_content', '').strip(),
             }
 
-            # Validate required fields
             if not all([form_data['title'], form_data['description'], form_data['ingredients'], form_data['cooking_method']]):
                 raise ValueError("All required fields must be filled")
 
             client = FlaskAPIClient(request)
             response = client.create_recipe(form_data)
             messages.success(request, "Recipe created successfully!")
-            return redirect('flask_recipe_detail', pk=response.get('id'))
+            return redirect('recipe_detail', pk=response.get('id'))
             
         except ValueError as e:
             messages.error(request, f"Validation error: {str(e)}")
         except FlaskAPIError as e:
             messages.error(request, f"API Error: {str(e)}")
         except Exception as e:
-            messages.error(request, f"Unexpected error occurred")
-            logger.exception("Error in flask_recipe_create")  # Log full error
+            logger.exception("Unexpected error in recipe_create")
+            messages.error(request, "Unexpected error occurred")
 
-        # Preserve form data on error
-        return render(request, 'recipes/flask_recipe_create.html', {
+        return render(request, 'recipes/recipe_create.html', {
             'form_data': request.POST.dict()
         })
     
-    # GET request - show empty form
-    return render(request, 'recipes/flask_recipe_create.html')
+    return render(request, 'recipes/recipe_create.html')
 
-
-
-
-#----------------------------------------------------------------------------------
+# --- Legacy/Shared Views (Synchronized with Flask where possible) ---
 
 def home(request):
-    category = request.GET.get('category')
-    if category == 'veg':
-        recipes = Recipe.objects.filter(category='veg')
-    elif category == 'nonveg':
-        recipes = Recipe.objects.filter(category='nonveg')
-    else:
-        recipes = Recipe.objects.all()
-    return render(request, 'recipes/home.html', {'recipes': recipes})
-
-def recipe_detail(request, pk):
-    recipe = get_object_or_404(Recipe, pk=pk)
-    comments = recipe.comments.all()
-
-    if request.method == "POST":
-        if not request.user.is_authenticated:
-            return HttpResponseForbidden("You must be logged in to comment.")
-
-        comment_form = CommentForm(request.POST)
-        if comment_form.is_valid():
-            comment = comment_form.save(commit=False)
-            comment.recipe = recipe
-            comment.user = request.user
-            comment.save()
-            return redirect('recipe_detail', pk=recipe.pk)
-    else:
-        form = CommentForm()
-
-    return render(request, 'recipes/recipe_detail.html', {
-        'recipe': recipe,
-        'comments': comments,
-        'comment_form': form,
-    })
-
-
-@login_required
-def recipe_create(request):
-    if request.method == 'POST':
-        form = RecipeForm(request.POST, request.FILES)
-        if form.is_valid():
-            recipe = form.save(commit=False)
-            recipe.created_by = request.user
-            recipe.user = request.user  # Set both user fields
-            recipe.save()
-            return redirect('recipe_detail', pk=recipe.pk)
-        else:
-            print(form.errors) if form.is_valid() else None  # Debugging line
-    else:
-        form = RecipeForm()
-    return render(request, 'recipes/recipe_create.html', {'form': form})
+    """Home page - defaults to recipe_list (API)"""
+    return recipe_list(request)
 
 @login_required
 def my_recipes(request):
-    recipes = Recipe.objects.filter(created_by=request.user)
-    return render(request, 'recipes/my_recipes.html', {'recipes': recipes})
-
-
-@login_required
-def recipe_update(request, pk):
-    recipe = get_object_or_404(Recipe, pk=pk)
-
-
-    if recipe.created_by != request.user and not request.user.is_staff and not request.user.is_superuser:
-        return HttpResponseForbidden("You are not allowed to edit this recipe.")
-
-    if request.method == 'POST':
-        form = RecipeForm(request.POST, request.FILES, instance=recipe)
-        if form.is_valid():
-            form.save()
-            return redirect('recipe_detail', pk=recipe.pk)
-    else:
-        form = RecipeForm(instance=recipe)
-
-    return render(request, 'recipes/recipe_update.html', {
-        'form': form,
-        'recipe': recipe
-    })
-
-from django.contrib.auth.decorators import login_required
-from django.shortcuts import get_object_or_404, redirect, render
-from django.http import HttpResponseForbidden
-from .models import Recipe
+    """Show recipes created by current user (via API or local sync)"""
+    client = FlaskAPIClient(request)
+    try:
+        # Since we don't have a direct 'my-recipes' endpoint, filter all recipes
+        # In a real app, add a user-specific endpoint to the Flask API
+        all_recipes = client.get_recipes()
+        user_recipes = [r for r in all_recipes if r.get('created_by_id') == request.user.id]
+        return render(request, 'recipes/my_recipes.html', {'recipes': user_recipes})
+    except Exception as e:
+        logger.error(f"Error fetching user recipes: {str(e)}")
+        # Fallback to local Django DB if API fails
+        recipes = Recipe.objects.filter(created_by=request.user)
+        return render(request, 'recipes/my_recipes.html', {'recipes': recipes})
 
 @login_required
 def recipe_delete(request, pk):
-    recipe = get_object_or_404(Recipe, pk=pk)
-
-    
-    if recipe.created_by != request.user and not request.user.is_staff and not request.user.is_superuser:
-        return HttpResponseForbidden("You are not allowed to delete this recipe.")
-
+    """Delete a recipe via Flask API"""
+    client = FlaskAPIClient(request)
     if request.method == 'POST':
-        recipe.delete()
-        return redirect('my_recipes')  
-
+        try:
+            client.delete_recipe(pk)
+            messages.success(request, "Recipe deleted successfully")
+            return redirect('my_recipes')
+        except Exception as e:
+            messages.error(request, f"Failed to delete: {str(e)}")
+    
+    # Try to get recipe info for confirmation page
+    try:
+        recipe = client.get_recipe(pk)
+    except:
+        recipe = None
     return render(request, 'recipes/recipe_delete.html', {'recipe': recipe})
 
+@login_required
+def recipe_update(request, pk):
+    """Update a recipe via Flask API"""
+    client = FlaskAPIClient(request)
+    try:
+        recipe = client.get_recipe(pk)
+        if recipe.get('created_by_id') != request.user.id and not request.user.is_staff:
+            return HttpResponseForbidden("You are not allowed to edit this recipe.")
+        
+        if request.method == 'POST':
+            form_data = {
+                'title': request.POST.get('title', '').strip(),
+                'description': request.POST.get('description', '').strip(),
+                'ingredients': request.POST.get('ingredients', '').strip(),
+                'cooking_method': request.POST.get('cooking_method', '').strip(),
+                'calorie_count': int(request.POST.get('calorie_count', 0)),
+                'cooking_time': int(request.POST.get('cooking_time', 0)),
+                'category': request.POST.get('category', 'veg'),
+                'allergic_content': request.POST.get('allergic_content', '').strip(),
+            }
+            client.update_recipe(pk, form_data)
+            messages.success(request, "Recipe updated successfully!")
+            return redirect('recipe_detail', pk=pk)
+        
+        return render(request, 'recipes/recipe_update.html', {'recipe': recipe})
+    except Exception as e:
+        logger.error(f"Error updating recipe {pk}: {str(e)}")
+        messages.error(request, f"Update failed: {str(e)}")
+        return redirect('recipe_detail', pk=pk)
 
 @login_required
-def edit_comment(request, pk):
-    comment = get_object_or_404(Comment, pk=pk)
-    if comment.user != request.user:
-        return HttpResponseForbidden("You are not allowed to edit this comment.")
-
+def add_comment(request, pk):
+    """Add a comment via Flask API"""
     if request.method == 'POST':
-        form = CommentForm(request.POST, instance=comment)
-        if form.is_valid():
-            form.save()
-            return redirect('recipe_detail', pk=comment.recipe.pk)
-    else:
-        form = CommentForm(instance=comment)
-    return render(request, 'recipes/edit_comment.html', {'form': form})
+        content = request.POST.get('content')
+        if not content:
+            messages.error(request, "Comment cannot be empty")
+            return redirect('recipe_detail', pk=pk)
+        
+        client = FlaskAPIClient(request)
+        try:
+            client.create_comment(pk, content, request.user.id)
+            messages.success(request, "Comment added!")
+        except Exception as e:
+            messages.error(request, f"Failed to add comment: {str(e)}")
+    return redirect('recipe_detail', pk=pk)
 
 @login_required
 def delete_comment(request, pk):
-    comment = get_object_or_404(Comment, pk=pk)
-    if comment.user != request.user:
-        return HttpResponseForbidden("You are not allowed to delete this comment.")
+    """Delete a comment via Flask API"""
+    client = FlaskAPIClient(request)
+    try:
+        # In a real app, you'd get the comment details first to find the recipe_id
+        # for redirection, but for now we follow the API path.
+        client.delete_comment(pk)
+        messages.success(request, "Comment deleted")
+    except Exception as e:
+        messages.error(request, f"Failed to delete comment: {str(e)}")
+    return redirect('home') # Redirect home since we don't naturally know the recipe_id here
 
-    if request.method == 'POST':
-        comment.delete()
-        return redirect('recipe_detail', pk=comment.recipe.pk)
-    return render(request, 'recipes/delete_comment.html', {'comment': comment})
-
-# # Contact Form View
 def contact_us(request):
+    """Contact form submission"""
     if request.method == 'POST':
         form = ContactForm(request.POST)
         if form.is_valid():
-            ContactMessage.objects.create(
-                name=form.cleaned_data['name'],
-                email=form.cleaned_data['email'],
-                subject=form.cleaned_data['subject'],
-                message=form.cleaned_data['message']
-            )
-            messages.success(request, 'Your message has been sent successfully!')
-            return redirect('home')
+            client = FlaskAPIClient()
+            try:
+                client.create_contact_message(
+                    name=form.cleaned_data['name'],
+                    email=form.cleaned_data['email'],
+                    message=form.cleaned_data['message']
+                )
+                messages.success(request, 'Your message has been sent to our team!')
+                return redirect('home')
+            except Exception as e:
+                logger.error(f"Failed to send contact message via API: {str(e)}")
+                ContactMessage.objects.create(**form.cleaned_data)
+                messages.success(request, 'Your message has been saved locally.')
+                return redirect('home')
     else:
         form = ContactForm()
-    
     return render(request, 'recipes/contact_us.html', {'form': form})

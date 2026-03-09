@@ -7,12 +7,11 @@ from wtforms import StringField, TextAreaField, IntegerField, SelectField, FileF
 from wtforms.validators import DataRequired
 import os
 from werkzeug.utils import secure_filename
-from datetime import datetime
+from datetime import datetime, timezone
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
 from flask_restful import Resource, Api
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from werkzeug.security import check_password_hash
 from flask_cors import CORS
 
 # Load environment variables
@@ -20,8 +19,12 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///C:/Users/Anurag Goyal/Desktop/g31_RecipeSharingPlatform_App/RecipeProject/db.sqlite3'
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
+
+# Fix path to use project root db.sqlite3
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(BASE_DIR, 'RecipeProject', 'db.sqlite3')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
+app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'RecipeProject', 'media', 'recipes')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Email configuration
@@ -35,7 +38,7 @@ app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_USERNAME')
 # Configure CORS
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:8000"],  # Your Django server
+        "origins": ["http://localhost:8000"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"]
     }
@@ -62,17 +65,25 @@ class User(UserMixin, db.Model):
     __tablename__ = 'users_customuser'
     
     id = db.Column(db.Integer, primary_key=True)
+    password = db.Column(db.String(128), nullable=False)
+    last_login = db.Column(db.DateTime)
+    is_superuser = db.Column(db.Boolean, default=False)
     username = db.Column(db.String(150), unique=True, nullable=False)
     first_name = db.Column(db.String(150), default='')
     last_name = db.Column(db.String(150), default='')
     email = db.Column(db.String(254), unique=True, nullable=False)
-    password = db.Column(db.String(128))
-    user_type = db.Column(db.String(50), default='user')
-    is_active = db.Column(db.Boolean, default=True)
     is_staff = db.Column(db.Boolean, default=False)
-    date_joined = db.Column(db.DateTime, default=datetime.utcnow)
-    is_superuser = db.Column(db.Boolean, default=False)
-    recipes = db.relationship('Recipe', backref='author', lazy=True)
+    is_active = db.Column(db.Boolean, default=True)
+    date_joined = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    profile_picture = db.Column(db.String(100), default='default-profile.jpg')
+    bio = db.Column(db.Text)
+    phone_number = db.Column(db.String(15))
+    address = db.Column(db.Text)
+    date_of_birth = db.Column(db.Date)
+    website = db.Column(db.String(200))
+    user_type = db.Column(db.String(10), default='user')
+
+    recipes = db.relationship('Recipe', backref='author', lazy=True, foreign_keys='Recipe.created_by_id')
     comments = db.relationship('Comment', backref='commenter', lazy=True)
 
     def set_password(self, password):
@@ -88,13 +99,15 @@ class Recipe(db.Model):
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=False)
     ingredients = db.Column(db.Text, nullable=False)
-    cooking_method = db.Column(db.Text, nullable=False)
     image = db.Column(db.String(100), nullable=True)
     calorie_count = db.Column(db.Integer, nullable=False)
     cooking_time = db.Column(db.Integer, nullable=False)
+    allergic_content = db.Column(db.String(255))
+    cooking_method = db.Column(db.Text, nullable=False)
     category = db.Column(db.String(10), nullable=False, default='veg')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    user_id = db.Column(db.Integer, db.ForeignKey('users_customuser.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    user_id = db.Column(db.Integer, db.ForeignKey('users_customuser.id'), nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users_customuser.id'), nullable=False)
 
     comments = db.relationship('Comment', backref='recipe_commented', lazy=True)
 
@@ -102,7 +115,7 @@ class Comment(db.Model):
     __tablename__ = 'recipe_app_comment'
     id = db.Column(db.Integer, primary_key=True)
     content = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     user_id = db.Column(db.Integer, db.ForeignKey('users_customuser.id'), nullable=True)
     recipe_id = db.Column(db.Integer, db.ForeignKey('recipe_app_recipe.id'), nullable=False)
 
@@ -111,22 +124,26 @@ class ContactMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(254), nullable=False)
+    subject = db.Column(db.String(200))
     message = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     is_read = db.Column(db.Boolean, default=False)
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 # API Resources
 class UserResource(Resource):
     def get(self, user_id):
-        user = User.query.get_or_404(user_id)
+        user = db.session.get(User, user_id)
+        if not user:
+            return {'error': 'User not found'}, 404
         return {
             'id': user.id,
             'username': user.username,
-            'email': user.email
+            'email': user.email,
+            'user_type': user.user_type
         }
 
 class UserListResource(Resource):
@@ -168,14 +185,14 @@ class UserListResource(Resource):
         return {
             'id': user.id,
             'username': user.username,
-            'email': user.email,
-            'is_active': user.is_active,
-            'is_superuser': user.is_superuser
+            'email': user.email
         }, 201
 
 class RecipeResource(Resource):
     def get(self, recipe_id):
-        recipe = Recipe.query.get_or_404(recipe_id)
+        recipe = db.session.get(Recipe, recipe_id)
+        if not recipe:
+            return {'error': 'Recipe not found'}, 404
         return {
             'id': recipe.id,
             'title': recipe.title,
@@ -185,12 +202,15 @@ class RecipeResource(Resource):
             'calorie_count': recipe.calorie_count,
             'cooking_time': recipe.cooking_time,
             'category': recipe.category,
-            'user_id': recipe.user_id
+            'allergic_content': recipe.allergic_content,
+            'created_by_id': recipe.created_by_id
         }
 
     @jwt_required()
     def delete(self, recipe_id):
-        recipe = Recipe.query.get_or_404(recipe_id)
+        recipe = db.session.get(Recipe, recipe_id)
+        if not recipe:
+            return {'error': 'Recipe not found'}, 404
         
         if recipe.image:
             try:
@@ -205,7 +225,6 @@ class RecipeResource(Resource):
 class RecipeListResource(Resource):
     def get(self):
         category = request.args.get('category')
-
         if category in ['veg', 'nonveg']:
             recipes = Recipe.query.filter_by(category=category).all()
         else:
@@ -220,7 +239,7 @@ class RecipeListResource(Resource):
             'calorie_count': recipe.calorie_count,
             'cooking_time': recipe.cooking_time,
             'category': recipe.category,
-            'user_id': recipe.user_id,
+            'created_by_id': recipe.created_by_id,
             'created_at': recipe.created_at.isoformat() if recipe.created_at else None
         } for recipe in recipes], 200
 
@@ -243,7 +262,9 @@ class RecipeListResource(Resource):
                 calorie_count=int(data['calorie_count']),
                 cooking_time=int(data['cooking_time']),
                 category=data['category'],
-                user_id=current_user_id
+                allergic_content=data.get('allergic_content', ''),
+                user_id=current_user_id,
+                created_by_id=current_user_id
             )
             
             db.session.add(recipe)
@@ -261,20 +282,86 @@ class RecipeListResource(Resource):
             db.session.rollback()
             return {'error': str(e)}, 500
 
+class CommentListResource(Resource):
+    def get(self, recipe_id):
+        comments = Comment.query.filter_by(recipe_id=recipe_id).all()
+        return [{
+            'id': c.id,
+            'content': c.content,
+            'user_id': c.user_id,
+            'created_at': c.created_at.isoformat()
+        } for c in comments]
+
+    @jwt_required()
+    def post(self, recipe_id):
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        if not data or 'content' not in data:
+            return {'error': 'Content is required'}, 400
+        
+        comment = Comment(
+            content=data['content'],
+            recipe_id=recipe_id,
+            user_id=current_user_id
+        )
+        db.session.add(comment)
+        db.session.commit()
+        return {'id': comment.id, 'message': 'Comment added'}, 201
+
+class ContactResource(Resource):
+    def post(self):
+        data = request.get_json()
+        required = ['name', 'email', 'message']
+        if not data or not all(f in data for f in required):
+            return {'error': 'Missing fields'}, 400
+        
+        msg = ContactMessage(
+            name=data['name'],
+            email=data['email'],
+            subject=data.get('subject', 'No Subject'),
+            message=data['message']
+        )
+        db.session.add(msg)
+        db.session.commit()
+        return {'message': 'Message sent'}, 201
+
+class CommentResource(Resource):
+    def get(self, comment_id):
+        comment = db.session.get(Comment, comment_id)
+        if not comment:
+            return {'error': 'Comment not found'}, 404
+        return {
+            'id': comment.id,
+            'content': comment.content,
+            'user_id': comment.user_id,
+            'recipe_id': comment.recipe_id
+        }
+
+    @jwt_required()
+    def delete(self, comment_id):
+        comment = db.session.get(Comment, comment_id)
+        if not comment:
+            return {'error': 'Comment not found'}, 404
+        
+        current_user_id = get_jwt_identity()
+        if comment.user_id != current_user_id:
+            return {'error': 'Unauthorized'}, 403
+            
+        db.session.delete(comment)
+        db.session.commit()
+        return {'message': 'Comment deleted'}
+
 class LoginResource(Resource):
     def post(self):
         data = request.get_json()
-        
         if not data or 'username' not in data or 'password' not in data:
             return {'error': 'Username and password are required'}, 400
 
         user = User.query.filter_by(username=data['username']).first()
-        
         if not user or not user.check_password(data['password']):
             return {'error': 'Invalid username or password'}, 401
         
         access_token = create_access_token(identity=user.id)
-        
         return {
             'message': 'Login successful',
             'access_token': access_token,
@@ -290,38 +377,12 @@ api.add_resource(UserListResource, '/api/users')
 api.add_resource(UserResource, '/api/users/<int:user_id>')
 api.add_resource(RecipeListResource, '/api/recipes')
 api.add_resource(RecipeResource, '/api/recipes/<int:recipe_id>')
+api.add_resource(CommentListResource, '/api/recipes/<int:recipe_id>/comments')
+api.add_resource(CommentResource, '/api/comments/<int:comment_id>')
+api.add_resource(ContactResource, '/api/contact')
 api.add_resource(LoginResource, '/api/login')
 
-# Create test data
-def create_test_data():
-    """Create test data if none exists"""
-    if not User.query.first():
-        test_user = User(
-            username='testuser',
-            email='test@example.com'
-        )
-        test_user.set_password('testpass')
-        db.session.add(test_user)
-        db.session.commit()
-        
-        if not Recipe.query.first():
-            test_recipe = Recipe(
-                title='Test Recipe',
-                description='This is a test recipe',
-                ingredients='Ingredient 1, Ingredient 2',
-                cooking_method='Step 1, Step 2',
-                calorie_count=500,
-                cooking_time=30,
-                category='veg',
-                user_id=test_user.id
-            )
-            db.session.add(test_recipe)
-            db.session.commit()
-
-# Initialize database and create test data
-with app.app_context():
-    db.create_all()
-    create_test_data()
-
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
